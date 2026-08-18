@@ -2,36 +2,57 @@
 
 I took sashakoshka's M4KC project and ported it to the wii u!
 
+
 Since her code used C for everything, and ONLY SDL2 and nothing else to render with,
 it was pretty straightforward to port... Though I did do more than just port it.
 I dont think Im going to work on it anymore, since its slow and I cant really do anything to make it faster
 because it ray-traces every pixel and the wii u's cpu isnt that awful powerful...
 
+
 Im including the latest rpx and wuhb so you shouldnt have to figure out how to build it unless you have to
 
+
 ** If you know what you are doing you could probably figure this out but I have a ton of crap installed within devkitpro msys2 I dont know how to make it print out what it needs...
-BUILDING:
-To build on windows you need to have DevKitPro MSYS2 Installed as well as
--WUT (Wii U Toolchain)
+
+## BUILDING:
+
+To build on windows you need to have \DevKitPro MSYS2\ Installed as well as
+
+-WUT (Wii U Toolchain).
+
 -DevKitPPC (PowerPc aka Wii U CPU)
+
 -GCC to compile (powerpc-eabi-gcc)
+
 -ELF2RPl
+
 -SDL2 Stuff
+
 -WUHBTOOL
 
-Heres all the changes I made:
+
+## Heres all the changes I made:
+
 -Made saving and loading work using the sd card and not pc junk
--Added vpad (gamepad) controls support
+
+-Added vpad (gamepad) controls 
+
 -Rewrote most of menus.c so you can navigate without the mouse (and you cant access the config menu)
+
 -I distributed the ray-tracing across the wii u's three cpu cores
+
 -Instead of calling sdl to render each pixel separately, it now waits until the entire frame has been traced before rendering
+
 -Leaf blocks now have dark green instead of transparent holes
+
+## |
 
 It kinda runs like crap... It runs great if you are in your house or underground (15-30fps) but if you are just wandering around or staring at the horizon its not going to run very well.
 
 Im honestly surprised I managed to port it because I dont really know what I am doing but have fun...
 
 If you know how to make it run faster and want to work on it contact me at spacerobot6152@proton.me and I can add you to the github to edit it or whatever...
+
 If you fork this you are free to do so just give credit to me as well as sashakoshka and whoever she said to credit, as well as notch for making the original game.
 
 \/ \/ \/ sashakoshka's original readme \/ \/ \/
