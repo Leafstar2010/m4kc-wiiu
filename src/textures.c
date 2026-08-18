@@ -156,12 +156,12 @@ static void genTexture (Block blockId) {
                 case BLOCK_LEAVES:
                         baseColor = 0x50D937;
 
-                        // Make transparent gaps between leaves
+                        // Dark green gaps instead of transparent - still opaque for performance
                         if (randm(2) == 0) {
-                                baseColor = 0;
-                                brightness = 255;
-                        }
-                        break;
+                               baseColor = 0x20950B;
+                               brightness = 96;
+                       }
+                       break;
                         
                 case BLOCK_TALL_GRASS:
                         baseColor = 0x50D937;

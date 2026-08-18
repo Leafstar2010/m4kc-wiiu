@@ -1,4 +1,5 @@
 #include <time.h>
+#include <vpad/input.h>
 #include "menus.h"
 #include "data.h"
 #include "blocks.h"
@@ -7,171 +8,305 @@
 
 static int menu_optionsMain (SDL_Renderer *, Inputs *);
 
+/* VPAD button state tracking */
+static uint32_t vpadHold = 0;
+static uint32_t vpadTrigger = 0;
+static uint32_t vpadRelease = 0;
+
+/* vpadReadInput
+ * Reads VPAD data and updates the global button state.
+ */
+static void vpadReadInput (void) {
+        VPADStatus vpadStatus;
+        VPADReadError vpadError;
+        int vpadRead = VPADRead(VPAD_CHAN_0, &vpadStatus, 1, &vpadError);
+
+        if (vpadRead > 0 && vpadError == VPAD_READ_SUCCESS) {
+                vpadHold    = vpadStatus.hold;
+                vpadTrigger = vpadStatus.trigger;
+                vpadRelease = vpadStatus.release;
+        }
+}
+
+/* vpadButtonPressed
+ * Returns 1 if the specified button was just pressed this frame.
+ */
+static int vpadButtonPressed (uint32_t button) {
+        return (vpadTrigger & button) ? 1 : 0;
+}
+
+/* vpadButtonHeld
+ * Returns 1 if the specified button is currently held.
+ */
+static int vpadButtonHeld (uint32_t button) {
+        return (vpadHold & button) ? 1 : 0;
+}
+
+/* drawMenuCursor
+ * Draws a selection arrow next to the currently highlighted menu item.
+ */
+static void drawMenuCursor (SDL_Renderer *renderer, int x, int y) {
+        white(renderer);
+        drawChar(renderer, '>', x, y);
+}
+
+/* drawMenuTitle
+ * Draws a centered title at the top of the screen.
+ */
+static void drawMenuTitle (SDL_Renderer *renderer, const char *title) {
+        white(renderer);
+        drawBig(renderer, title, BUFFER_HALF_W, 8);
+}
+
+/* drawMenuButton
+ * Draws a menu button and returns 1 if it's the currently selected item.
+ */
+static int drawMenuButton (SDL_Renderer *renderer, const char *text, int x, int y, int w, int selected) {
+        if (selected) {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 64);
+                SDL_Rect bg = { x, y, w, 18 };
+                SDL_RenderFillRect(renderer, &bg);
+                drawMenuCursor(renderer, x - 12, y + 4);
+        }
+        white(renderer);
+        drawStr(renderer, text, x + 4, y + 4);
+        return selected;
+}
+
+/* drawMenuSlider
+ * Draws a menu option with < and > arrows for cycling through values.
+ * Returns 1 if left arrow was pressed, 2 if right arrow was pressed.
+ */
+static int drawMenuSlider (SDL_Renderer *renderer, const char *text, int x, int y, int w, int selected) {
+        int result = 0;
+        
+        if (selected) {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 64);
+                SDL_Rect bg = { x, y, w, 18 };
+                SDL_RenderFillRect(renderer, &bg);
+                drawMenuCursor(renderer, x - 12, y + 4);
+                
+                if (vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                        result = 1;
+                }
+                if (vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                        result = 2;
+                }
+        }
+        white(renderer);
+        drawStr(renderer, text, x + 4, y + 4);
+        return result;
+}
+
 /* === GAME STATES === */
 
 /* state_title
- * Presents a title screen with basic options. Is capable of changing the game
- * state.
+ * Presents a title screen with basic options.
  */
 int state_title (SDL_Renderer *renderer, Inputs *inputs, int *gameState) {
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
+        vpadReadInput();
+        (void)(inputs);
+
+        static int selection = 0;
+        int maxSelection = 1;
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = maxSelection;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection > maxSelection) selection = 0;
+        }
 
         dirtBg(renderer);
-        white(renderer);
-        drawBig (
-                renderer,
-                "M4KC",
-                BUFFER_HALF_W,
-                16
-        );
+        drawMenuTitle(renderer, "M4KCU");
 
         #ifdef small
-        shadowStr(renderer, "version 0.7", 1, BUFFER_H - 9);
+        shadowStr(renderer, "Wii U Port (V0.7)", 10, BUFFER_H - 10);
         #else
-        shadowStr(renderer, "version 0.7 (dev build)", 1, BUFFER_H - 9);
+        shadowStr(renderer, "Wii U Port (V0.7)", 10, BUFFER_H - 10);
         #endif
 
-        if (button(renderer, "Singleplayer",
-                BUFFER_HALF_W - 64, 42, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                if (data_refreshWorldList()) {
-                        gameLoop_error("Cannot refresh world list");
-                } else {
-                        *gameState = STATE_SELECT_WORLD;
+        drawMenuButton(renderer, "Play", BUFFER_HALF_W - 64, BUFFER_HALF_H - 10, 128, selection == 0);
+        //drawMenuButton(renderer, "Options", BUFFER_HALF_W - 64, 64, 128, selection == 1);
+
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                switch (selection) {
+                case 0:
+                        if (data_refreshWorldList()) {
+                                gameLoop_error("Cannot refresh world list");
+                        } else {
+                                *gameState = STATE_SELECT_WORLD;
+                        }
+                        break;
+                //case 1:
+                //        *gameState = STATE_OPTIONS;
+                //        break;
                 }
-        }
-
-        if (button(renderer, "Options",
-                BUFFER_HALF_W - 64, 64, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gameState = STATE_OPTIONS;
-        }
-
-        if (button(renderer, "Quit Game",
-                BUFFER_HALF_W - 64, 86, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                return 1;
         }
 
         return 0;
 }
 
+/* state_selectWorld
+ * Shows a list of saved worlds to play or delete.
+ */
 void state_selectWorld (
         SDL_Renderer *renderer,
         Inputs *inputs,
         int *gameState,
         World *world
 ) {
+        vpadReadInput();
+        (void)(inputs);
+
         static int scroll = 0;
-        int needRefresh   = 0;
+        static int selection = 0;
+        int needRefresh = 0;
 
-        if (inputs->mouse.wheel != 0) {
-                scroll -= inputs->mouse.wheel;
-                inputs->mouse.wheel = 0;
+        int totalItems = data_worldListLength + 2; // worlds + Cancel + New
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = totalItems - 1;
+                if (selection < scroll) scroll = selection;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                selection--;
+                if (selection < 0) selection = totalItems - 1;
+                if (selection < scroll) scroll = selection;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection >= totalItems) selection = 0;
+                if (selection >= scroll + ((BUFFER_H - 72) / 21)) {
+                        scroll = selection - ((BUFFER_H - 72) / 21) + 1;
+                }
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                selection++;
+                if (selection >= totalItems) selection = 0;
+                if (selection >= scroll + ((BUFFER_H - 72) / 21)) {
+                        scroll = selection - ((BUFFER_H - 72) / 21) + 1;
+                }
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
+                *gameState = STATE_TITLE;
+                selection = 0;
+                scroll = 0;
+                return;
         }
 
-        if (scroll < 0) { scroll = 0; }
-        if (scroll > data_worldListLength - 1) {
-                scroll = data_worldListLength - 1;
-        }
+        if (scroll < 0) scroll = 0;
 
         SDL_Rect listBackground;
         listBackground.x = 0;
         listBackground.y = 0;
         listBackground.w = BUFFER_W;
         listBackground.h = BUFFER_H - 28;
-        
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
 
         dirtBg(renderer);
         tblack(renderer);
-        SDL_RenderFillRect (renderer, &listBackground);
-        SDL_RenderDrawLine (renderer,
+        SDL_RenderFillRect(renderer, &listBackground);
+        SDL_RenderDrawLine(renderer,
                 0,        BUFFER_H - 29,
                 BUFFER_W, BUFFER_H - 29);
 
-        int index  = 0;
-        int y      = 6;
+        drawMenuTitle(renderer, "Select World");
+
+        int index = 0;
+        int y = 30;
         int yLimit = BUFFER_H - 44;
         data_WorldListItem *item = data_worldList;
+        
+        // Draw world list items
         while (item != NULL) {
-                if (y > yLimit)     { break;}
+                if (y > yLimit) break;
                 if (index < scroll) { goto nextItem; }
-                
-                int hover = drawWorldListItem(renderer, item,
-                        BUFFER_HALF_W - 64, y,
-                        inputs->mouse.x,
-                        inputs->mouse.y);
-                y += 21;
-                if (!inputs->mouse.left) { goto nextItem; }
 
-                switch (hover) {
-                case 1:
-                        if (World_load(world, item->name)) {
-                                gameLoop_error("Could not load world");
-                        } else {
-                                *gameState = STATE_LOADING;
-                        }
-                        return;
-                case 2:
-                        ;char deletePath[PATH_MAX];
+                int isSelected = (selection == index);
+                if (isSelected) {
+                        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 64);
+                        SDL_Rect bg = { BUFFER_HALF_W - 64, y, 128, 18 };
+                        SDL_RenderFillRect(renderer, &bg);
+                        drawMenuCursor(renderer, BUFFER_HALF_W - 76, y + 4);
+                }
+                white(renderer);
+                drawStr(renderer, item->name, BUFFER_HALF_W - 56, y + 4);
+                y += 21;
+
+                if (vpadButtonPressed(VPAD_BUTTON_X) && isSelected) {
+                        char deletePath[PATH_MAX];
                         if (data_getWorldPath(deletePath, item->name)) {
                                 gameLoop_error("Could not delete world");
                                 return;
                         }
-
                         data_removeDirectory(deletePath);
                         needRefresh = 1;
-                        
-                        break;
                 }
 
                 nextItem:
-                index ++;
+                index++;
                 item = item->next;
         }
 
-        if (6 + index * 22 > yLimit) {
-                scrollbar (
-                        renderer,
-                        BUFFER_HALF_W + 70, 0, BUFFER_H - 29,
-                        inputs->mouse.x, inputs->mouse.y, inputs->mouse.left,
-                        &scroll, data_worldListLength); 
+        // Show "No worlds" if list is empty
+        if (data_worldListLength == 0 && index == 0) {
+                shadowCenterStr(renderer, "No worlds", BUFFER_HALF_W, BUFFER_HALF_H - 15);
+                y = BUFFER_HALF_H;
         }
 
-        if (index == 0) {
-                shadowCenterStr (renderer, "No worlds",
-                        BUFFER_HALF_W, BUFFER_HALF_H - 15);
+        // Add some spacing before the buttons
+        if (y < BUFFER_H - 50) {
+                y = BUFFER_H - 50;
         }
 
-        if (button(renderer, "Cancel",
-                BUFFER_HALF_W - 64, BUFFER_H - 22, 61,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gameState = STATE_TITLE;
-                scroll = 0;
+        // Cancel button
+        {
+                int isSelected = (selection == index);
+                drawMenuButton(renderer, "Cancel", BUFFER_HALF_W - 64, y, 61, isSelected);
+        }
+        // New button
+        {
+                int isSelected = (selection == index + 1);
+                drawMenuButton(renderer, "New", BUFFER_HALF_W + 3, y, 61, isSelected);
         }
 
-        if (button(renderer, "New",
-                BUFFER_HALF_W + 3, BUFFER_H - 22, 61,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gameState = STATE_NEW_WORLD;
-                scroll = 0;
+        // Handle A button presses
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                if (selection < data_worldListLength) {
+                        // A world was selected
+                        item = data_worldList;
+                        for (int i = 0; i < selection && item; i++) {
+                                item = item->next;
+                        }
+                        if (item) {
+                                if (World_load(world, item->name)) {
+                                        gameLoop_error("Could not load world");
+                                } else {
+                                        *gameState = STATE_LOADING;
+                                }
+                        }
+                } else if (selection == data_worldListLength) {
+                        // Cancel button
+                        *gameState = STATE_TITLE;
+                        selection = 0;
+                        scroll = 0;
+                } else if (selection == data_worldListLength + 1) {
+                        // New button
+                        *gameState = STATE_NEW_WORLD;
+                        selection = 0;
+                        scroll = 0;
+                }
         }
 
         if (needRefresh) {
                 data_refreshWorldList();
+                totalItems = data_worldListLength + 2;
+                if (selection >= totalItems) {
+                        selection = totalItems - 1;
+                }
         }
 }
 
@@ -190,8 +325,7 @@ const char *dayNightModes[16] = {
 };
 
 /* state_newWorld
- * Shows a menu with editable parameters for creating a new world. Capable of
- * editing world prarameters and changing the game state.
+ * Shows a menu for creating a new world.
  */
 void state_newWorld (
         SDL_Renderer *renderer,
@@ -199,100 +333,153 @@ void state_newWorld (
         int *gameState,
         World *world
 ) {
-        static int badName    = 0;
-        static int whichInput = 0;
+        vpadReadInput();
+        (void)(inputs);
 
-        static int typeSelect     = 1;
+        static int selection = 0;
+        static int typeSelect = 1;
         static int dayNightSelect = 0;
-        
-        static char seedBuffer[16];
-        static InputBuffer seedInput = {
-                .buffer = seedBuffer,
-                .len    = 16,
-                .cursor = 0
-        };
-        
-        static char nameBuffer[16];
-        static InputBuffer nameInput = {
-                .buffer = nameBuffer,
-                .len    = 16,
-                .cursor = 0
-        };
-                
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
+        static int badName = 0;
+
+        static char seedBuffer[16] = "";
+        static char nameBuffer[16] = "World";
+        static int nameCursor = 0;
+        static int seedCursor = 0;
+
+        int maxSelection = 4; // Name, Seed, Terrain, Day/Night, Cancel, Generate
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = maxSelection;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection > maxSelection) selection = 0;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
+                *gameState = STATE_SELECT_WORLD;
+                selection = 0;
+                return;
+        }
 
         dirtBg(renderer);
-        
-        if (whichInput == 0) {manageInputBuffer(&nameInput, inputs); }
-        if (input(renderer, "Name", nameInput.buffer,
-                BUFFER_HALF_W - 64, 8, 128,
-                inputs->mouse.x, inputs->mouse.y, whichInput == 0) &&
-                inputs->mouse.left
-        ) {
-                whichInput = 0;
-        }
 
-        if (badName) {
-                SDL_SetRenderDrawColor(renderer, 255, 128, 128, 255);
-                drawChar(renderer, '!', BUFFER_HALF_W + 70, 12);
-        }
-        
-        if (whichInput == 1) {manageInputBuffer(&seedInput, inputs); }
-        if (input(renderer, "Seed", seedInput.buffer,
-                BUFFER_HALF_W - 64, 30, 128,
-                inputs->mouse.x, inputs->mouse.y, whichInput == 1) &&
-                inputs->mouse.left
-        ) {
-                whichInput = 1;
-        }
-        
-        if (button(renderer, terrainNames[typeSelect],
-                BUFFER_HALF_W - 64, 52, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                typeSelect = (typeSelect + 1) % 5;
-        }
-
-
-        if (button(renderer, dayNightModes[dayNightSelect],
-                BUFFER_HALF_W - 64, 74, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                dayNightSelect = (dayNightSelect + 1) % 3;
-        }
-
-        if (button(renderer, "Cancel",
-                BUFFER_HALF_W - 64, 96, 61,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gameState = STATE_SELECT_WORLD;
-        }
-
-        if (button(renderer, "Generate",
-                BUFFER_HALF_W + 3, 96, 61,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                // Reject empty names and names with slashes
-                if (nameInput.buffer[0] == 0) {
-                        goto cantMakeWorld;
+        // Name field
+        {
+                char displayName[32];
+                if (nameBuffer[0] == 0) {
+                        snprintf(displayName, 32, "Name:      ");
+                } else {
+                        snprintf(displayName, 32, "Name: %s", nameBuffer);
                 }
-                for (int index = 0; nameInput.buffer[index]; index ++) {
-                        if (nameInput.buffer[index] == '/') {
-                                goto cantMakeWorld;
+                if (selection == 0 && vpadButtonPressed(VPAD_BUTTON_A)) {
+                        if (nameBuffer[0] == 0) {
+                                nameBuffer[0] = 'My-World';
+                                nameCursor = 1;
                         }
                 }
+                drawMenuButton(renderer, displayName, BUFFER_HALF_W - 64, 20, 128, selection == 0);
+        }
 
-                if (data_getWorldPath(world->path, nameInput.buffer)) {
-                        goto cantMakeWorld;
+        // Seed field
+        /*{
+                char displaySeed[32];
+                if (seedBuffer[0] == 0) {
+                        snprintf(displaySeed, 32, "Seed: (random)");
+                } else {
+                        snprintf(displaySeed, 32, "Seed: %s", seedBuffer);
+                }
+                if (selection == 1 && vpadButtonPressed(VPAD_BUTTON_A)) {
+                        if (seedBuffer[0] == 0) {
+                                snprintf(seedBuffer, 16, "12345");
+                                seedCursor = 5;
+                        } else {
+                                seedBuffer[0] = 0;
+                                seedCursor = 0;
+                        }
+                }
+                drawMenuButton(renderer, displaySeed, BUFFER_HALF_W - 64, 52, 128, selection == 1);
+        }*/
+
+        // Terrain type
+        if (selection == 1) {
+                if (vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                        typeSelect--;
+                        if (typeSelect < 0) typeSelect = 4;
+                }
+                if (vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                        typeSelect++;
+                        if (typeSelect > 4) typeSelect = 0;
+                }
+                if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                        typeSelect++;
+                        if (typeSelect > 4) typeSelect = 0;
+                }
+        }
+        drawMenuSlider(renderer, terrainNames[typeSelect], BUFFER_HALF_W - 64, 50, 128, selection == 1);
+
+        // Day/Night mode
+        if (selection == 2) {
+                if (vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                        dayNightSelect--;
+                        if (dayNightSelect < 0) dayNightSelect = 2;
+                }
+                if (vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                        dayNightSelect++;
+                        if (dayNightSelect > 2) dayNightSelect = 0;
+                }
+                if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                        dayNightSelect++;
+                        if (dayNightSelect > 2) dayNightSelect = 0;
+                }
+        }
+        drawMenuSlider(renderer, dayNightModes[dayNightSelect], BUFFER_HALF_W - 64, 70, 128, selection == 2);
+
+        // Cancel
+        drawMenuButton(renderer, "Cancel", BUFFER_HALF_W - 64, 90, 61, selection == 3);
+        if (selection == 3 && vpadButtonPressed(VPAD_BUTTON_A)) {
+                *gameState = STATE_SELECT_WORLD;
+                selection = 0;
+        }
+        if (selection == 3 && vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                selection++;
+        }
+
+        // Generate
+        drawMenuButton(renderer, "Create", BUFFER_HALF_W + 3, 90, 61, selection == 4);
+        if (selection == 4 && vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                selection--;
+        }
+        if (selection == 4 && vpadButtonPressed(VPAD_BUTTON_A)) {
+                // Default if empty
+                if (nameBuffer[0] == 0) {
+                        nameBuffer[0] = 'My World';
+                        nameBuffer[1] = 0;
+                }
+                // Reject names with slashes
+                int invalidName = 0;
+                for (int i = 0; nameBuffer[i]; i++) {
+                        if (nameBuffer[i] == '/') {
+                                invalidName = 1;
+                                break;
+                        }
+                }
+                if (invalidName) {
+                        badName = 1;
+                        nameBuffer[0] = 0;
+                        return;
+                }
+
+                if (data_getWorldPath(world->path, nameBuffer)) {
+                        badName = 1;
+                        nameBuffer[0] = 0;
+                        return;
                 }
 
                 if (data_directoryExists(world->path)) {
-                        goto cantMakeWorld;
+                        badName = 1;
+                        nameBuffer[0] = 0;
+                        return;
                 }
 
                 world->time         = 2048;
@@ -301,9 +488,9 @@ void state_newWorld (
 
                 // Get numeric seed
                 world->seed = 0;
-                for (int index = 0; seedInput.buffer[index]; index ++) {
+                for (int i = 0; seedBuffer[i]; i++) {
                         world->seed *= 10;
-                        world->seed += seedInput.buffer[index] - '0';
+                        world->seed += seedBuffer[i] - '0';
                 }
 
                 // "Randomize" seed if it was not set
@@ -311,34 +498,29 @@ void state_newWorld (
                         world->seed = time(0) % 999999999999999;
                 }
 
-                // Secret world for testing nonsense. Type "dev"
+                // Secret world for testing
                 if (world->seed == 5800) {
                         world->type = -1;
                 }
-                
-                whichInput = 0;
-                
-                seedInput.buffer[0] = 0;
-                seedInput.cursor    = 0;
-                
-                nameInput.buffer[0] = 0;
-                nameInput.cursor    = 0;
-                badName             = 0;
-                
+
+                seedBuffer[0] = 0;
+                seedCursor = 0;
+                nameBuffer[0] = 0;
+                nameCursor = 0;
+                badName = 0;
+                selection = 0;
+
                 *gameState = STATE_LOADING;
         }
 
-        return;
-
-        cantMakeWorld:
-        nameInput.buffer[0] = 0;
-        nameInput.cursor    = 0;
-        badName             = 1;
+        if (badName) {
+                SDL_SetRenderDrawColor(renderer, 255, 128, 128, 255);
+                drawStr(renderer, "Invalid name!", BUFFER_HALF_W - 40, 140);
+        }
 }
 
 /* state_loading
- * Shows a loading screen and progressively loads in chunks. Returns 1 when
- * finished.
+ * Shows a loading screen and progressively loads in chunks. Returns 1 when finished.
  */
 int state_loading (
         SDL_Renderer *renderer,
@@ -348,13 +530,13 @@ int state_loading (
 ) {
         IntCoords chunkLoadCoords;
         static int chunkLoadNum = 0;
-        
+
         if (chunkLoadNum < CHUNKARR_SIZE) {
                 chunkLoadCoords.x =
                         ((chunkLoadNum % CHUNKARR_DIAM) -
                         CHUNKARR_RAD) * 64;
                 chunkLoadCoords.y =
-                        (((chunkLoadNum / CHUNKARR_DIAM) % CHUNKARR_DIAM) - 
+                        (((chunkLoadNum / CHUNKARR_DIAM) % CHUNKARR_DIAM) -
                         CHUNKARR_RAD) * 64;
                 chunkLoadCoords.z =
                         ((chunkLoadNum / (CHUNKARR_DIAM * CHUNKARR_DIAM)) -
@@ -380,70 +562,49 @@ int state_loading (
 }
 
 /* state_options
- * Shows an options screen. Capable of changing settings and the game state.
+ * Shows an options screen.
  */
 void state_options (SDL_Renderer *renderer, Inputs *inputs, int *gameState) {
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
+        vpadReadInput();
 
         dirtBg(renderer);
+        drawMenuTitle(renderer, "Options");
 
-        if (menu_optionsMain (renderer, inputs)) {
-                *gameState = 0;
+        if (menu_optionsMain(renderer, inputs)) {
+                *gameState = STATE_TITLE;
         }
 }
 
 /* state_egg
- * This lacks description. Capable of changing the game state.
+ * This lacks description.
  */
 void state_egg (SDL_Renderer *renderer, Inputs *inputs, int *gameState) {
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
+        vpadReadInput();
+        (void)(inputs);
 
         dirtBg(renderer);
         white(renderer);
-        centerStr (
-                renderer,
-                "Go away, this is my house.",
-                BUFFER_HALF_W,
-                BUFFER_HALF_H - 16
-        );
-        if (button(renderer, "Ok",
-                BUFFER_HALF_W - 64, BUFFER_HALF_H, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
+        centerStr(renderer, "Go away, this is my house.", BUFFER_HALF_W, BUFFER_HALF_H - 16);
+
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
                 *gameState = STATE_TITLE;
         }
 }
 
 /* state_err
- * Shows an error message on screen. Returns 1 when the "Ok" button is pressed.
+ * Shows an error message on screen.
  */
 int state_err (SDL_Renderer *renderer, Inputs *inputs, char *message) {
-        inputs->mouse.x /= BUFFER_SCALE;
-        inputs->mouse.y /= BUFFER_SCALE;
+        vpadReadInput();
+        (void)(inputs);
 
         dirtBg(renderer);
         SDL_SetRenderDrawColor(renderer, 255, 128, 128, 255);
-        centerStr (
-                renderer,
-                "Error:",
-                BUFFER_HALF_W,
-                BUFFER_HALF_H - 20
-        );
+        centerStr(renderer, "Error:", BUFFER_HALF_W, BUFFER_HALF_H - 20);
         white(renderer);
-        centerStr (
-                renderer,
-                message,
-                BUFFER_HALF_W,
-                BUFFER_HALF_H - 4
-        );
-        if (button(renderer, "Ok",
-                BUFFER_HALF_W - 64, BUFFER_HALF_H + 16, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
+        centerStr(renderer, message, BUFFER_HALF_W, BUFFER_HALF_H - 4);
+
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
                 return 1;
         }
         return 0;
@@ -452,8 +613,7 @@ int state_err (SDL_Renderer *renderer, Inputs *inputs, char *message) {
 /* === INGAME POPUPS === */
 
 /* popup_hud
- * Draws the heads up display, including the hotbar, offhand, crosshair, health,
- * hunger, chat history, and the debug menu if activated.
+ * Draws the heads up display.
  */
 void popup_hud (
         SDL_Renderer *renderer, Inputs *inputs, World *world,
@@ -483,7 +643,7 @@ void popup_hud (
         // Debug screen
         if (*debugOn) {
                 static char debugText [][32] = {
-                        "M4KC 0.7",
+                        "M4KC 0.7 (Wii U)",
                         "Seed: ",
                         "X: ",
                         "Y: ",
@@ -494,33 +654,24 @@ void popup_hud (
                         "ChunkZ: "
                 };
 
-                // Seed
                 strnum(debugText[1], 6, world->seed);
-
-                // Coordinates
                 strnum(debugText[2], 3, (int)player->pos.x);
                 strnum(debugText[3], 3, (int)player->pos.y);
                 strnum(debugText[4], 3, (int)player->pos.z);
-
-                // FPS
                 strnum(debugText[5], 5, *fps_now);
-
-                // Chunk coordinates
                 strnum(debugText[6], 8, ((int)player->pos.x) >> 6);
                 strnum(debugText[7], 8, ((int)player->pos.y) >> 6);
                 strnum(debugText[8], 8, ((int)player->pos.z) >> 6);
 
-                // Text
                 for (i = 0; i < 9; i++) {
                         drawBGStr(renderer, debugText[i], 0, i * 9);
                 }
 
-                // Chunk monitor
                 #ifndef small
                 #define CHUNKMONW   10
                 #define CHUNKMONCOL 9
 
-                SDL_Rect chunkMonitorRect = { 
+                SDL_Rect chunkMonitorRect = {
                         .x = 0,
                         .y = 1 - CHUNKMONW,
                         .w = CHUNKMONW,
@@ -552,7 +703,7 @@ void popup_hud (
                 #undef CHUNKMONCOL
                 #endif
         }
-        
+
         // Hotbar
         tblack(renderer);
         SDL_RenderFillRect(renderer, &hotbarRect);
@@ -602,8 +753,7 @@ void popup_hud (
 }
 
 /* manageInvSlot
- * Draws and performs the input logic of a single inventory slot. Capable of
- * changing which slot is currently being dragged.
+ * Draws and performs the input logic of a single inventory slot.
  */
 void manageInvSlot (
         SDL_Renderer *renderer,
@@ -623,7 +773,6 @@ void manageInvSlot (
         ) && inputs->mouse.left) {
                 inputs->mouse.left = 0;
                 if (*dragging) {
-                        // Place down item
                         if (current->blockid == 0) {
                                 *current  = *selected;
                                 *selected = (const InvSlot) { 0 };
@@ -633,9 +782,7 @@ void manageInvSlot (
                         } else {
                                 InvSlot_swap(current, selected);
                         }
-                        
                 } else if (current->blockid != 0) {
-                        // Pick up item
                         *selected = *current;
                         *current  = (const InvSlot) { 0 };
                         *dragging = 1;
@@ -644,15 +791,21 @@ void manageInvSlot (
 }
 
 /* popup_inventory
- * Allows the user to manage their inventory, rearranging the items inside of
- * it. Capable of closing itself.
+ * Allows the user to manage their inventory with D-pad navigation.
  */
 void popup_inventory (
         SDL_Renderer *renderer,
         Inputs *inputs,
         Player *player,
         int *gamePopup
-) {     
+) {
+        vpadReadInput();
+
+        static int selectionX = 4;
+        static int selectionY = 2;
+        static InvSlot selected = { 0 };
+        static int dragging = 0;
+
         SDL_Rect inventoryRect;
         inventoryRect.x = BUFFER_HALF_W - 77;
         inventoryRect.y = (BUFFER_H - 18) / 2 - 26;
@@ -671,8 +824,23 @@ void popup_inventory (
         offhandRect.w = 18;
         offhandRect.h = 18;
 
-        static InvSlot selected = { 0 };
-        static int dragging = 0;
+        // D-pad navigation
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selectionY--;
+                if (selectionY < 0) selectionY = 3;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selectionY++;
+                if (selectionY > 3) selectionY = 0;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_LEFT)) {
+                selectionX--;
+                if (selectionX < 0) selectionX = 8;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_RIGHT)) {
+                selectionX++;
+                if (selectionX > 8) selectionX = 0;
+        }
 
         // Inventory background
         tblack(renderer);
@@ -682,71 +850,122 @@ void popup_inventory (
 
         // Hotbar items
         for (int i = 0; i < HOTBAR_SIZE; i++) {
-                manageInvSlot (
-                        renderer, inputs,
-                        BUFFER_HALF_W - 76 + i * 17,
-                        BUFFER_H - 17,
+                int slotX = BUFFER_HALF_W - 76 + i * 17;
+                int slotY = BUFFER_H - 17;
+
+                if (selectionY == 3 && selectionX == i) {
+                        white(renderer);
+                        SDL_Rect cursor = { slotX - 1, slotY - 1, 18, 18 };
+                        SDL_RenderDrawRect(renderer, &cursor);
+                }
+
+                drawSlot (
+                        renderer,
                         &player->inventory.hotbar[i],
-                        &selected,
-                        &dragging
+                        slotX, slotY,
+                        0, 0
                 );
+
+                // A button to pick up/place
+                if (selectionY == 3 && selectionX == i && vpadButtonPressed(VPAD_BUTTON_A)) {
+                        if (dragging) {
+                                if (player->inventory.hotbar[i].blockid == 0) {
+                                        player->inventory.hotbar[i] = selected;
+                                        selected = (const InvSlot) { 0 };
+                                        dragging = 0;
+                                } else if (player->inventory.hotbar[i].blockid == selected.blockid) {
+                                        InvSlot_transfer(&player->inventory.hotbar[i], &selected);
+                                } else {
+                                        InvSlot_swap(&player->inventory.hotbar[i], &selected);
+                                }
+                        } else if (player->inventory.hotbar[i].blockid != 0) {
+                                selected = player->inventory.hotbar[i];
+                                player->inventory.hotbar[i] = (const InvSlot) { 0 };
+                                dragging = 1;
+                        }
+                }
         }
 
         // Inventory items
         for (int i = 0; i < INVENTORY_SIZE; i++) {
-                manageInvSlot (
-                        renderer, inputs,
-                        BUFFER_HALF_W - 76 + (i % HOTBAR_SIZE) * 17,
-                        inventoryRect.y + 1 + (i / HOTBAR_SIZE) * 17,
+                int slotX = BUFFER_HALF_W - 76 + (i % HOTBAR_SIZE) * 17;
+                int slotY = inventoryRect.y + 1 + (i / HOTBAR_SIZE) * 17;
+                int gridX = i % HOTBAR_SIZE;
+                int gridY = i / HOTBAR_SIZE;
+
+                if (selectionY == gridY && selectionX == gridX) {
+                        white(renderer);
+                        SDL_Rect cursor = { slotX - 1, slotY - 1, 18, 18 };
+                        SDL_RenderDrawRect(renderer, &cursor);
+                }
+
+                drawSlot (
+                        renderer,
                         &player->inventory.slots[i],
-                        &selected,
-                        &dragging
+                        slotX, slotY,
+                        0, 0
                 );
+
+                if (selectionY == gridY && selectionX == gridX && vpadButtonPressed(VPAD_BUTTON_A)) {
+                        if (dragging) {
+                                if (player->inventory.slots[i].blockid == 0) {
+                                        player->inventory.slots[i] = selected;
+                                        selected = (const InvSlot) { 0 };
+                                        dragging = 0;
+                                } else if (player->inventory.slots[i].blockid == selected.blockid) {
+                                        InvSlot_transfer(&player->inventory.slots[i], &selected);
+                                } else {
+                                        InvSlot_swap(&player->inventory.slots[i], &selected);
+                                }
+                        } else if (player->inventory.slots[i].blockid != 0) {
+                                selected = player->inventory.slots[i];
+                                player->inventory.slots[i] = (const InvSlot) { 0 };
+                                dragging = 1;
+                        }
+                }
         }
 
         // Offhand
-        manageInvSlot (
-                renderer, inputs,
-                1,
-                BUFFER_H - 17,
+        drawSlot (
+                renderer,
                 &player->inventory.offhand,
-                &selected,
-                &dragging
+                1, BUFFER_H - 17,
+                0, 0
         );
 
         if (dragging) {
                 drawSlot (
                         renderer,
                         &selected,
-                        inputs->mouse.x - 8,
-                        inputs->mouse.y - 8,
+                        BUFFER_HALF_W - 8,
+                        (BUFFER_H - 18) / 2 - 34,
                         0, 0
                 );
         }
-        
-        // Exit inventory
-        if (inputs->keyboard.e) {
-                inputs->keyboard.e = 0;
+
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
+                if (dragging) {
+                        for (int i = 0; i < INVENTORY_SIZE; i++) {
+                                if (player->inventory.slots[i].blockid == 0) {
+                                        player->inventory.slots[i] = selected;
+                                        selected = (const InvSlot) { 0 };
+                                        dragging = 0;
+                                        break;
+                                }
+                        }
+                }
                 *gamePopup = POPUP_HUD;
         }
 }
 
 /* popup_chat
- * Allows the user to type in chat, and view farther back in the message
- * history. Capable of closing itself.
+ * What is the point of chat on this game...
+ * Is there even multiplayer???
  */
 void popup_chat (SDL_Renderer *renderer, Inputs *inputs, uint64_t gameTime) {
-        static char buffer[64] = { 0 };
-        static InputBuffer chatBox = {
-                .buffer = buffer,
-                .len    = 64,
-                .cursor = 0
-        };
+        (void)(gameTime);
+        (void)(inputs);
         
-        static SDL_Rect chatBoxRect = {0, 0, 0, 9};
-        chatBoxRect.y = BUFFER_H - 9;
-        chatBoxRect.w = BUFFER_W;
-
         int chatDrawIndex = chatHistoryIndex;
         for (int i = 0; i < 11; i++) {
                 chatDrawIndex = nmod(chatDrawIndex - 1, 11);
@@ -755,91 +974,78 @@ void popup_chat (SDL_Renderer *renderer, Inputs *inputs, uint64_t gameTime) {
                         0, BUFFER_H - 32 - i * 9
                 );
         }
-
-        // Get keyboard input
-        if (manageInputBuffer(&chatBox, inputs)) {
-                // 63: max chat box length
-                // 7:  max username length
-                // 2:  ": " chars
-                // 1:  null
-                static char chatNameConcat[63 + 7 + 2 + 1];
-                snprintf (chatNameConcat,  63 + 7 + 2, "%s: %s",
-                        options.username.buffer, chatBox.buffer);
-                
-                // Add input to chat
-                chatAdd(chatNameConcat);
-                // Clear input box
-                chatBox.cursor = 0;
-                chatBox.buffer[0] = 0;
-        }
-
-        // Chat input box
-        // If char limit is reached, give some visual
-        // feedback.
-        if (chatBox.cursor == 63) {
-                SDL_SetRenderDrawColor(renderer, 128, 0, 0, 128);
-        } else {
-                tblack(renderer);
-        }
-        
-        SDL_RenderFillRect(renderer, &chatBoxRect);
-
-        white(renderer);
-        drawChar (
-                renderer,
-                95 + 32 * ((gameTime >> 6) % 2),
-                drawStr (
-                        renderer, chatBox.buffer,
-                        0, BUFFER_H - 8
-                ),
-                BUFFER_H - 8
-        );
 }
 
 /* popup_pause
- * Displays a pause menu. Capable of activating submenus or changing the game
- * state.
+ * Displays a pause menu with D-pad navigation.
  */
 void popup_pause (
         SDL_Renderer *renderer, Inputs *inputs,
         int *gamePopup, int *gameState, World *world
 ) {
-        if (button(renderer, "Back to Game",
-                BUFFER_HALF_W - 64, 20, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
+        vpadReadInput();
+        (void)(inputs);
+
+        static int selection = 0;
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = 2;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection > 2) selection = 0;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
                 *gamePopup = POPUP_HUD;
+                selection = 0;
+                return;
         }
 
-        if (button(renderer, "Options...",
-                BUFFER_HALF_W - 64, 42, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gamePopup = POPUP_OPTIONS;
-        }
+        tblack(renderer);
+        SDL_Rect bg = { 0, 0, BUFFER_W, BUFFER_H };
+        SDL_RenderFillRect(renderer, &bg);
 
-        if (button(renderer, "Save and Quit",
-                BUFFER_HALF_W - 64, 64, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                int err = World_save(world);
-                if (err) {
-                        gameLoop_error("Could not save world");
-                        return;
+        drawMenuTitle(renderer, "Paused");
+
+        drawMenuButton(renderer, "Back to Game", BUFFER_HALF_W - 64, 30, 128, selection == 0);
+        //drawMenuButton(renderer, "Options...", BUFFER_HALF_W - 64, 52, 128, selection == 1);
+        drawMenuButton(renderer, "Save and Quit", BUFFER_HALF_W - 64, 74, 128, selection == 1); //== 2);
+
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                switch (selection) {
+                case 0:
+                        *gamePopup = POPUP_HUD;
+                        break;
+                /*case 1:
+                        *gamePopup = POPUP_OPTIONS;
+                        break;*/
+                case 1: //case 2:
+                        int err = World_save(world);
+                        if (err) {
+                                gameLoop_error("Could not save world");
+                                return;
+                        }
+                        World_wipe(world);
+                        *gameState = STATE_TITLE;
+                        break;
                 }
-
-                World_wipe(world);
-                *gameState = STATE_TITLE;
+                selection = 0;
         }
 }
 
 /* popup_options
- * Shows an options screen. Capable of changing settings and closing itself.
+ * Shows an options screen.
  */
 void popup_options (SDL_Renderer *renderer, Inputs *inputs, int *gamePopup) {
+        vpadReadInput();
+
+        tblack(renderer);
+        SDL_Rect bg = { 0, 0, BUFFER_W, BUFFER_H };
+        SDL_RenderFillRect(renderer, &bg);
+
+        drawMenuTitle(renderer, "Options");
+
         if (menu_optionsMain(renderer, inputs)) {
                 *gamePopup = 1;
         }
@@ -847,64 +1053,88 @@ void popup_options (SDL_Renderer *renderer, Inputs *inputs, int *gamePopup) {
 
 #ifndef small
 /* popup_debugTools
- * Shows a menu listing advanced debug tools. These are only included in debug
- * builds and are not included in compressed executables.
+ * Shows a menu listing advanced debug tools.
  */
 void popup_debugTools (SDL_Renderer *renderer, Inputs *inputs, int *gamePopup) {
-        if (button(renderer, "Chunk Peek",
-                BUFFER_HALF_W - 64, 20, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gamePopup = POPUP_CHUNK_PEEK;
+        vpadReadInput();
+        (void)(inputs);
+
+        static int selection = 0;
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = 3;
         }
-        
-        if (button(renderer, "All Chunks",
-                BUFFER_HALF_W - 64, 42, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gamePopup = POPUP_ROLL_CALL;
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection > 3) selection = 0;
         }
-        
-        if (button(renderer, "World overview",
-                BUFFER_HALF_W - 64, 64, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gamePopup = POPUP_OVERVIEW;
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
+                *gamePopup = POPUP_HUD;
+                selection = 0;
+                return;
         }
 
-        if (button(renderer, "Done",
-                BUFFER_HALF_W - 64, 86, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                *gamePopup = POPUP_HUD;
+        tblack(renderer);
+        SDL_Rect bg = { 0, 0, BUFFER_W, BUFFER_H };
+        SDL_RenderFillRect(renderer, &bg);
+
+        drawMenuTitle(renderer, "Debug Tools");
+
+        drawMenuButton(renderer, "Chunk Peek", BUFFER_HALF_W - 64, 30, 128, selection == 0);
+        drawMenuButton(renderer, "All Chunks", BUFFER_HALF_W - 64, 52, 128, selection == 1);
+        drawMenuButton(renderer, "World Overview", BUFFER_HALF_W - 64, 74, 128, selection == 2);
+        drawMenuButton(renderer, "Done", BUFFER_HALF_W - 64, 96, 128, selection == 3);
+
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                switch (selection) {
+                case 0:
+                        *gamePopup = POPUP_CHUNK_PEEK;
+                        break;
+                case 1:
+                        *gamePopup = POPUP_ROLL_CALL;
+                        break;
+                case 2:
+                        *gamePopup = POPUP_OVERVIEW;
+                        break;
+                case 3:
+                        *gamePopup = POPUP_HUD;
+                        break;
+                }
+                selection = 0;
         }
 }
 
 /* popup_chunkPeek
- * Shows a 3D map of the current chunk, with the ability to view a cross-section
- * of it. This feature is only included in debug builds.
+ * Shows a 3D map of the current chunk.
  */
 void popup_chunkPeek (
         SDL_Renderer *renderer, Inputs *inputs, World *world,
         int *gamePopup,
         Player *player
 ) {
+        vpadReadInput();
+        (void)(inputs);
+
         static int chunkPeekRYMax = 0;
 
         int chunkPeekRX,
             chunkPeekRY,
             chunkPeekRZ,
             chunkPeekColor;
-        
+
         Chunk *debugChunk;
         char chunkPeekText[][32] = {
                 "coordHash: ",
                 "loaded: "
         };
+
+        if (vpadButtonHeld(VPAD_BUTTON_UP)) {
+                chunkPeekRYMax = nmod(chunkPeekRYMax - 1, 64);
+        }
+        if (vpadButtonHeld(VPAD_BUTTON_DOWN)) {
+                chunkPeekRYMax = nmod(chunkPeekRYMax + 1, 64);
+        }
 
         debugChunk = chunkLookup (
                 world,
@@ -915,54 +1145,15 @@ void popup_chunkPeek (
 
         white(renderer);
         if (debugChunk != NULL) {
-                // There is a chunk to display info about. Process
-                // strings.
-                strnum(chunkPeekText[0], 11, debugChunk -> coordHash);
-                strnum(chunkPeekText[1], 8,  debugChunk -> loaded);
-                // Draw the strings
+                strnum(chunkPeekText[0], 11, debugChunk->coordHash);
+                strnum(chunkPeekText[1], 8,  debugChunk->loaded);
                 for (int i = 0; i < 2; i++) {
                         drawStr(renderer, chunkPeekText[i], 0, i << 3);
                 }
 
-                // Scroll wheel for changing chunk map xray
-                if (inputs->mouse.wheel != 0) {
-                        chunkPeekRYMax -= inputs->mouse.wheel;
-                        chunkPeekRYMax = nmod(chunkPeekRYMax, 64);
-                        inputs->mouse.wheel = 0;
-                }
-
-                // Mouse for changing chunk map xray
-                if (
-                        inputs->mouse.x > 128 &&
-                        inputs->mouse.y < 64  &&
-                        inputs->mouse.left
-                ) chunkPeekRYMax = inputs->mouse.y;
-
-                // Up/Down buttons for changing chunk map xray
-                if (button(renderer, "UP",
-                        4, 56, 64,
-                        inputs->mouse.x, inputs->mouse.y)
-                        && inputs->mouse.left
-                ) {
-                        chunkPeekRYMax = nmod(chunkPeekRYMax - 1, 64);
-                }
-
-                if (button(renderer, "DOWN",
-                        4, 78, 64,
-                        inputs->mouse.x, inputs->mouse.y)
-                        && inputs->mouse.left
-                ) {
-                        chunkPeekRYMax = nmod(chunkPeekRYMax + 1, 64);
-                }
-
-                // Draw chunk map
                 white(renderer);
-                SDL_RenderDrawLine (
-                        renderer,
-                        128, chunkPeekRYMax,
-                        191, chunkPeekRYMax
-                );
-                
+                SDL_RenderDrawLine(renderer, 128, chunkPeekRYMax, 191, chunkPeekRYMax);
+
                 for (
                         chunkPeekRY = 64;
                         chunkPeekRY >= chunkPeekRYMax;
@@ -980,34 +1171,31 @@ void popup_chunkPeek (
                                 chunkPeekRX +
                                 (chunkPeekRY << 6) +
                                 (chunkPeekRZ << 12)];
-                        
+
                         chunkPeekColor = textures [
                                 currentBlock * 256 * 3 + 6 * 16];
 
                         if (chunkPeekColor) {
                                 int alpha = 255;
-                                
                                 if (currentBlock == BLOCK_WATER) {
                                         alpha = 64;
                                 }
-                        
+
                                 SDL_SetRenderDrawColor (
                                         renderer,
                                         (chunkPeekColor >> 16 & 0xFF),
                                         (chunkPeekColor >> 8 & 0xFF),
                                         (chunkPeekColor & 0xFF),
                                         alpha);
-                                
+
                                 SDL_RenderDrawPoint (
                                         renderer,
                                         chunkPeekRX + 128,
                                         chunkPeekRY + chunkPeekRZ);
-                                        
-                                // A little shadow for depth
+
                                 SDL_SetRenderDrawColor (
-                                        renderer,
-                                        0, 0, 0, 64);
-                                
+                                        renderer, 0, 0, 0, 64);
+
                                 SDL_RenderDrawPoint (
                                         renderer,
                                         chunkPeekRX + 128,
@@ -1015,14 +1203,10 @@ void popup_chunkPeek (
                         }
                 }
         } else {
-                drawStr(renderer, "Chunk not found", 0, 0); 
+                drawStr(renderer, "Chunk not found", 0, 0);
         }
 
-        if (button(renderer, "Done",
-                4, 100, 64,
-                inputs->mouse.x, inputs->mouse.y)
-                && inputs->mouse.left
-        ) {
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
                 *gamePopup = POPUP_ADVANCED_DEBUG;
         }
 }
@@ -1031,46 +1215,47 @@ void popup_rollCall (
         SDL_Renderer *renderer, Inputs *inputs, World *world,
         int *gamePopup
 ) {
+        vpadReadInput();
+        (void)(inputs);
+
         static int scroll = 0;
 
-        if (inputs->mouse.wheel != 0) {
-                scroll += inputs->mouse.wheel;
-                inputs->mouse.wheel = 0;
+        if (vpadButtonHeld(VPAD_BUTTON_UP)) {
+                scroll++;
+        }
+        if (vpadButtonHeld(VPAD_BUTTON_DOWN)) {
+                scroll--;
         }
 
-        if (scroll > 0) { scroll = 0; }
-        if (scroll < 1 - CHUNKARR_SIZE) { scroll = 1 - CHUNKARR_SIZE; }
+        if (scroll > 0) scroll = 0;
+        if (scroll < 1 - CHUNKARR_SIZE) scroll = 1 - CHUNKARR_SIZE;
 
         white(renderer);
         drawStr(renderer, "x    y    z   stmp    hash", 8, 10);
 
-        for (int index = 0; index < CHUNKARR_SIZE; index ++) {
+        for (int index = 0; index < CHUNKARR_SIZE; index++) {
                 Chunk *chunk = &world->chunk[index];
                 char chunkDescription[32];
                 white(renderer);
 
                 int topMargin = 28;
                 int y = (index + scroll) * 8 + topMargin;
-                if (y < topMargin || y >= BUFFER_H) { continue; }
-                
+                if (y < topMargin || y >= BUFFER_H) continue;
+
                 snprintf(chunkDescription, 32, "%i", chunk->center.x - 32);
                 drawStr(renderer, chunkDescription, 0,   y);
                 snprintf(chunkDescription, 32, "%i", chunk->center.y - 32);
                 drawStr(renderer, chunkDescription, 24,  y);
                 snprintf(chunkDescription, 32, "%i", chunk->center.z - 32);
                 drawStr(renderer, chunkDescription, 48,  y);
-                
+
                 snprintf(chunkDescription, 32, "#%i", chunk->loaded);
                 drawStr(renderer, chunkDescription, 72,  y);
                 snprintf(chunkDescription, 32, "%016x", chunk->coordHash);
                 drawStr(renderer, chunkDescription, 96,  y);
         }
 
-        if (button(renderer, "Done",
-                BUFFER_W - 6 - 32, 6, 32,
-                inputs->mouse.x, inputs->mouse.y)
-                && inputs->mouse.left
-        ) {
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
                 *gamePopup = POPUP_ADVANCED_DEBUG;
         }
 }
@@ -1079,6 +1264,8 @@ void popup_overview (
         SDL_Renderer *renderer, Inputs *inputs, World *world,
         int *gamePopup
 ) {
+        vpadReadInput();
+        (void)(inputs);
         (void)(world);
 
         int worldEndingBound   = CHUNK_SIZE * (CHUNKARR_RAD + 1);
@@ -1088,7 +1275,7 @@ void popup_overview (
         for (int z = worldStartingBound; z < worldEndingBound; z += 4) {
                 int projectX = (x - z) / 4;
                 int projectY = ((x + z) / 2 + y) / 4;
-        
+
                 Block currentBlock = World_getBlock(world, x, y, z);
                 int color;
                 int alpha = 255;
@@ -1104,93 +1291,90 @@ void popup_overview (
                         if (currentBlock == BLOCK_WATER) {
                                 alpha = 64;
                         }
-                
+
                         SDL_SetRenderDrawColor (
                                 renderer,
                                 (color >> 16 & 0xFF),
                                 (color >> 8 & 0xFF),
                                 (color & 0xFF),
                                 alpha);
-                        
+
                         SDL_RenderDrawPoint (
                                 renderer,
                                 projectX + BUFFER_HALF_W,
                                 projectY + 32);
                 }
         }
-        
 
-        if (button(renderer, "Done",
-                BUFFER_W - 6 - 32, 6, 32,
-                inputs->mouse.x, inputs->mouse.y)
-                && inputs->mouse.left
-        ) {
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
                 *gamePopup = POPUP_ADVANCED_DEBUG;
         }
 }
 #endif
 
 /* menu_optionsMain
- * This function presents the options menu. It's purpose is to be included in
- * other functions that draw a suitable background and then call this one.
- * Returns 1 when the user pressed the "Done" button. Capable of changing
- * settings.
+ * Options menu navigable with D-pad.
  */
 static int menu_optionsMain (SDL_Renderer *renderer, Inputs *inputs) {
+        (void)(inputs);
+        static int selection = 0;
         static int page = 0;
+
+        int maxSelection = 3; // Options per page + Done button
+
+        if (vpadButtonPressed(VPAD_BUTTON_UP)) {
+                selection--;
+                if (selection < 0) selection = maxSelection;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_DOWN)) {
+                selection++;
+                if (selection > maxSelection) selection = 0;
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_LEFT) && selection == maxSelection) {
+                page--;
+                page = nmod(page, 2);
+        }
+        if (vpadButtonPressed(VPAD_BUTTON_RIGHT) && selection == maxSelection) {
+                page++;
+                page = nmod(page, 2);
+        }
+
+        // Page navigation at top
+        char pageText[16];
+        snprintf(pageText, 16, "< Page %i >", page + 1);
+        int isPageSelected = (selection == maxSelection);
+        if (isPageSelected) {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 64);
+                SDL_Rect bg = { BUFFER_HALF_W - 40, 30, 80, 18 };
+                SDL_RenderFillRect(renderer, &bg);
+                drawMenuCursor(renderer, BUFFER_HALF_W - 52, 34);
+        }
+        white(renderer);
+        drawStr(renderer, pageText, BUFFER_HALF_W - 32, 34);
 
         switch (page) {
         case 0:
-                manageInputBuffer(&options.username, inputs);
-                input (renderer, "Username", options.username.buffer,
-                        BUFFER_HALF_W - 64, 20, 128,
-                        inputs->mouse.x, inputs->mouse.y, 1);
+                drawMenuButton(renderer, options.username.buffer[0] ? options.username.buffer : "Username: (none)",
+                        BUFFER_HALF_W - 64, 52, 128, selection == 0);
 
                 static char *trapMouseTexts[] = {
                         "Capture Mouse: OFF",
                         "Capture Mouse: ON"
                 };
-                if (button(renderer, trapMouseTexts[options.trapMouse],
-                        BUFFER_HALF_W - 64, 42, 128,
-                        inputs->mouse.x, inputs->mouse.y) &&
-                        inputs->mouse.left
-                ) {
-                        options.trapMouse = !options.trapMouse;
+                drawMenuButton(renderer, trapMouseTexts[options.trapMouse],
+                        BUFFER_HALF_W - 64, 74, 128, selection == 1);
+
+                if (selection == 2) {
+                        drawMenuButton(renderer, "Done", BUFFER_HALF_W - 64, 96, 128, 1);
+                } else {
+                        drawMenuButton(renderer, "Done", BUFFER_HALF_W - 64, 96, 128, 0);
                 }
                 break;
         case 1:
-                ;static char drawDistanceText[20] = { 0 };
-                if (!drawDistanceText[0]) {
-                        snprintf (
-                                drawDistanceText, 20,
-                                "Draw distance: %i",
-                                options.drawDistance);
-                }
-                
-                if (button(renderer, drawDistanceText,
-                        BUFFER_HALF_W - 64, 20, 128,
-                        inputs->mouse.x, inputs->mouse.y) &&
-                        inputs->mouse.left
-                ) {
-                        switch (options.drawDistance) {
-                        case 20:
-                                options.drawDistance = 32;
-                                break;
-                        case 32:
-                                options.drawDistance = 64;
-                                break;
-                        case 64:
-                                options.drawDistance = 96;
-                                break;
-                        case 96:
-                                options.drawDistance = 128;
-                                break;
-                        default:
-                                options.drawDistance = 20;
-                                break;
-                        }
-                        strnum(drawDistanceText, 15, options.drawDistance);
-                }
+                ;static char drawDistanceText[20] = "Draw distance: ";
+                strnum(drawDistanceText + 15, 3, options.drawDistance);
+                drawMenuButton(renderer, drawDistanceText,
+                        BUFFER_HALF_W - 64, 52, 128, selection == 0);
 
                 static char *fovTexts[] = {
                         "FOV: Low",
@@ -1205,64 +1389,78 @@ static int menu_optionsMain (SDL_Renderer *renderer, Inputs *inputs) {
                         case 90:  fovText = fovTexts[1]; break;
                         case 140: fovText = fovTexts[0]; break;
                 }
-                
-                if (button(renderer, fovText,
-                        BUFFER_HALF_W - 64, 42, 128,
-                        inputs->mouse.x, inputs->mouse.y) &&
-                        inputs->mouse.left
-                ) {
-                        switch ((int)options.fov) {
-                                case 60: options.fov = 140; break;
-                                case 90: options.fov = 60;  break;
-                                default: options.fov = 90;  break;
-                        }
-                        
-                }
+                drawMenuButton(renderer, fovText,
+                        BUFFER_HALF_W - 64, 74, 128, selection == 1);
 
-                static char *fogTexts[] = {
-                        "Fog: Gradual",
-                        "Fog: Sharp"
-                };
-                if (button(renderer, fogTexts[options.fogType],
-                        BUFFER_HALF_W - 64, 64, 128,
-                        inputs->mouse.x, inputs->mouse.y) &&
-                        inputs->mouse.left
-                ) {
-                        options.fogType = !options.fogType;
+                if (selection == 2) {
+                        drawMenuButton(renderer, "Done", BUFFER_HALF_W - 64, 96, 128, 1);
+                } else {
+                        drawMenuButton(renderer, "Done", BUFFER_HALF_W - 64, 96, 128, 0);
                 }
-                
                 break;
         }
 
-        if (button(renderer, "<",
-                BUFFER_HALF_W - 86, 20, 16,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                page --;
-                page = nmod(page, 2);
+        // Handle A button presses
+        if (vpadButtonPressed(VPAD_BUTTON_A)) {
+                if (selection == maxSelection) {
+                        // Done button
+                        int err = options_save();
+                        if (err) {
+                                gameLoop_error("Could not save options");
+                        }
+                        page = 0;
+                        selection = 0;
+                        return 1;
+                }
+
+                switch (page) {
+                case 0:
+                        switch (selection) {
+                        case 0:
+                                // Username - cycle through some presets for console
+                                if (strcmp(options.username.buffer, "Player") == 0) {
+                                        strncpy(options.username.buffer, "Steve", 16);
+                                } else if (strcmp(options.username.buffer, "Steve") == 0) {
+                                        strncpy(options.username.buffer, "Alex", 16);
+                                } else {
+                                        strncpy(options.username.buffer, "Player", 16);
+                                }
+                                break;
+                        case 1:
+                                options.trapMouse = !options.trapMouse;
+                                break;
+                        }
+                        break;
+                case 1:
+                        switch (selection) {
+                        case 0:
+                                switch (options.drawDistance) {
+                                case 20:  options.drawDistance = 32; break;
+                                case 32:  options.drawDistance = 64; break;
+                                case 64:  options.drawDistance = 96; break;
+                                case 96:  options.drawDistance = 128; break;
+                                default:  options.drawDistance = 20; break;
+                                }
+                                break;
+                        case 1:
+                                switch ((int)options.fov) {
+                                case 60:  options.fov = 140; break;
+                                case 90:  options.fov = 60;  break;
+                                default:  options.fov = 90;  break;
+                                }
+                                break;
+                        }
+                        break;
+                }
         }
 
-        if (button(renderer, ">",
-                BUFFER_HALF_W + 70, 20, 16,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
-                page ++;
-                page = nmod(page, 2);
-        }
-
-        if (button(renderer, "Done",
-                BUFFER_HALF_W - 64, 86, 128,
-                inputs->mouse.x, inputs->mouse.y) &&
-                inputs->mouse.left
-        ) {
+        if (vpadButtonPressed(VPAD_BUTTON_B)) {
                 int err = options_save();
                 if (err) {
                         gameLoop_error("Could not save options");
                 }
-        
                 page = 0;
+                selection = 0;
                 return 1;
         }
 

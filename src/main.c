@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <whb/proc.h>
+#include <sndcore2/core.h>
 #include "textures.h"
 #include "gameloop.h"
 #include "options.h"
@@ -35,6 +37,13 @@ static int handleEvent(Inputs *, const uint8_t *, SDL_Event);
 int main (int argc, char *argv[]) {
         (void)(argc);
         (void)(argv);
+
+        // Initialize Wii U proc system
+        WHBProcInit();
+
+        // Initialize and immediately shut down audio to silence loading music
+        AXInit();
+        AXQuit();
 
         //----  initializing SDL  ----//
 
@@ -89,12 +98,11 @@ int main (int argc, char *argv[]) {
         //----   main game loop   ----//
 
         Inputs inputs = {0};
-        int running = 1;
-        while (running) {
+        while (WHBProcIsRunning()) {
                 uint32_t frameStartTime = SDL_GetTicks();
                 
-                running &= controlLoop(&inputs, keyboard);
-                running &= gameLoop(&inputs, renderer);
+                if (!controlLoop(&inputs, keyboard)) break;
+                if (!gameLoop(&inputs, renderer)) break;
                 
                 SDL_RenderPresent(renderer);
                 SDL_UpdateWindowSurface(window);
@@ -112,6 +120,7 @@ int main (int argc, char *argv[]) {
 
         exit:
         SDL_Quit();
+        WHBProcShutdown();
         return 0;
 }
 
